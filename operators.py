@@ -62,7 +62,7 @@ def get_texture_items(self, context, texture_list, base_path, color_number=0):
         search_tex = search_tex.replace("_COLOR", "") # Because fuck this game
         search_tex = search_tex.replace("_00", "") # Because fuck this game
         is_normal_or_comb = search_tex.upper().endswith("N.XT") or search_tex.upper().endswith("C.XT")
-        if re.search(r'\d', tex) and not is_normal_or_comb:
+        if re.search(r'\d', tex) and not is_normal_or_comb and color_number<6:
             search_tex = re.sub(r'\d', str(color_number), search_tex)
         
             

@@ -92,31 +92,61 @@ def parse_key_frame(f):
     return KeyFrame(time, rotation_data, translation_data, scale_data, [unk_flag_bits, yy_byte])
 
 def parse_motion_bytes(data: bytes, action_name: str):
-    f = io.BytesIO(data)
     try:
-        f.read(2)
-        animationLen = struct.unpack("<H", f.read(2))[0]
-        key_count_header = struct.unpack("<H", f.read(2))[0]
-        f.read(1)
-        track_count = struct.unpack("<B", f.read(1))[0]
-        ten_value = struct.unpack("<I", f.read(4))[0]
+        # 1. Unpack header in bulk
+        animationLen, key_count_header = struct.unpack_from("<HH", data, 2)
+        track_count = struct.unpack_from("<B", data, 7)[0]
+        ten_value, header_size = struct.unpack_from("<II", data, 8)
+        
         if ten_value != 16:
             print(f"Warning: Expected value 16 at offset 8, found {ten_value} in {action_name}")
-        header_size = struct.unpack("<I", f.read(4))[0]
+            
+        # 2. Parse tracks
+        tracks = []
+        aux = 0
+        offset = 16
+        for i in range(track_count):
+            t_offset, t_key_count = struct.unpack_from("<II", data, offset)
+            offset += 8
+            aux += t_key_count
+            tracks.append(Track(t_offset, t_key_count))
+            
+        if aux != key_count_header:
+            print(f"Warning: Sum of track key counts ({aux}) does not match total key count ({key_count_header})")
 
-        tracks, key_count_sum = parse_tracks(f, key_count_header, track_count)
-
-        for i, track in enumerate(tracks):
-            f.seek(track.offset)
-            for kf_index in range(track.key_count):
-                key_frame = parse_key_frame(f)
-                if key_frame:
-                    track.keyframes.append(key_frame)
-                else:
-                    break
+        # 3. Batch parse keyframes using raw offsets (Massive speedup here)
+        for track in tracks:
+            kf_offset = track.offset
+            for _ in range(track.key_count):
+                time, flags_byte, yy_byte = struct.unpack_from("<HBB", data, kf_offset)
+                kf_offset += 4
+                
+                presence_flags = flags_byte & 0x07
+                unk_list = [flags_byte >> 3, yy_byte]
+                
+                rot = trans = scale = None
+                
+                if presence_flags & 0x04:
+                    q1, q2, q3, q4 = struct.unpack_from("<ffff", data, kf_offset)
+                    # GG2 uses x,y,z,w - Mathutils expects w,x,y,z
+                    rot = mathutils.Quaternion((q4, q1, q2, q3)) 
+                    kf_offset += 16
+                if presence_flags & 0x01:
+                    sx, sy, sz = struct.unpack_from("<fff", data, kf_offset)
+                    scale = mathutils.Vector((sx, sy, sz))
+                    kf_offset += 12
+                if presence_flags & 0x02:
+                    tx, ty, tz = struct.unpack_from("<fff", data, kf_offset)
+                    trans = mathutils.Vector((tx, ty, tz))
+                    kf_offset += 12
+                    
+                track.keyframes.append(KeyFrame(time, rot, trans, scale, unk_list))
 
         return CGGS_Motion(animationLen, key_count_header, track_count, header_size, tracks)
 
+    except struct.error as e:
+        print(f"Error reading key frame data in {action_name}: {e}")
+        return None
     except Exception as e:
         print(f"Error parsing motion bytes for {action_name}: {e}")
         return None

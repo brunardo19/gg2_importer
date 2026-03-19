@@ -51,7 +51,7 @@ def apply_motion_to_armature(armature, motion_data, action_name):
 
             # Collect Rotation
             if keyframe.rotation:
-                blender_pose_quat = rel_inv_quat @ keyframe.rotation.to_blender()
+                blender_pose_quat = rel_inv_quat @ keyframe.rotation
                 if blender_pose_quat.w < 0:
                     blender_pose_quat.negate()
                 
@@ -62,14 +62,14 @@ def apply_motion_to_armature(armature, motion_data, action_name):
 
             # Collect Translation
             if keyframe.translation:
-                blender_pose_vec = relative_matrix_inv @ keyframe.translation.to_blender()
+                blender_pose_vec = relative_matrix_inv @ keyframe.translation
                 loc_data[0].extend((frame, blender_pose_vec.x))
                 loc_data[1].extend((frame, blender_pose_vec.y))
                 loc_data[2].extend((frame, blender_pose_vec.z))
 
             # Collect Scale
             if keyframe.scale:
-                blender_pose_scale = keyframe.scale.to_blender()
+                blender_pose_scale = keyframe.scale
                 scl_data[0].extend((frame, blender_pose_scale.x))
                 scl_data[1].extend((frame, blender_pose_scale.y))
                 scl_data[2].extend((frame, blender_pose_scale.z))
