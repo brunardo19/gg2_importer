@@ -345,6 +345,8 @@ class LoadlistEntrySelector(bpy.types.Operator):
         execution_time = end_time - start_time
 
         print(f"Execution took {execution_time:.4f} seconds")
+        
+        bpy.context.view_layer.update()
 
         return {"FINISHED"}
 
