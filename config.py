@@ -3,7 +3,7 @@ from pathlib import Path
 MOTS = [
     "BMOT.PKM", "IMOT.PKM", "DMOT.PKM", "SMOT.PKM", "NMOT.PKM",
     "EMOT.PKM", "IMMOT.PKM", "DMMOT.PKM", "SMMOT.PKM", "NMMOT.PKM",
-    "EMMOT.PKM", "VMMOT.PKM", "KMMOT.PKM", "CMOT.PKM",
+    "EMMOT.PKM", "VMMOT.PKM", "KMMOT.PKM", "BMOT.PKM", # BMOT at the end instead of CMOT for a very valid reason
 ]
 
 DISPLAY_NAMES_1 = {

@@ -287,12 +287,21 @@ class Entry:
                 print(f"Extracted {target_entry.asbname} from {asb_path}")
         return out
 
+    def get_mix_entry(self):
+        if self.mixname:
+            mix_path = config.DATA_PATH / f"MIX.PKM"
+            if mix_path.exists():
+                return self
+        elif self.colorVariationSource:
+            return self.colorVariationSource.get_mix_entry()
+        return None
+
     def get_animations(self):
         out = []
         mix_data_map = []
-        target_entry = self.colorVariationSource if self.colorVariationSource else self
+        target_entry = self.get_mix_entry()
 
-        if target_entry.mixname:
+        if target_entry and target_entry.mixname:
             mix_path = config.DATA_PATH / "MIX.PKM"
             if mix_path.exists():
                 mix_bytes = target_entry.extract_file_from_pkm(mix_path, target_entry.index)
@@ -317,7 +326,7 @@ class Entry:
                 if mot_idx in batch_results:
                     out.append((slot, batch_results[mot_idx]))
                 else:
-                    print(f"Warning: Motion index {mot_idx} not found in PKM.")
+                    print(f"Warning: Motion index {mot_idx} not found in PKM {mot_pkm_path.name} for entry {target_entry.name}")
         else:
             print(f"Warning: Invalid motIndex {target_entry.motIndex} for entry {target_entry.name}")
 
