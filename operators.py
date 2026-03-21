@@ -16,9 +16,9 @@ import time
 
 class GG2EntryItem(bpy.types.PropertyGroup):
     entry_index: IntProperty()
+    internal_name: StringProperty()
     display_name: StringProperty()
     color_number: IntProperty()
-    has_model: BoolProperty()
     
 def code_to_name(code):
     if not isinstance(code, str) or len(code) < 2:
@@ -46,17 +46,28 @@ def code_to_name(code):
 # control how the row looks
 class GG2_UL_EntryList(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        split = layout.split(factor=0.2)
+        split = layout.split(factor=0.1)
         split.label(text=f"[{item.entry_index}]")
-        
-        split = split.split(factor=0.6)
+        split.label(text=item.internal_name)
         split.label(text=item.display_name)
         split.label(text=f"Color: {item.color_number}")
+            
+    def filter_items(self, context, data, propname):
+        entries = getattr(data, propname)
+        flt_flags = []
+        flt_neworder = []
+
+        # Enables filtering by the 'display_name' property
+        if self.filter_name:
+            flt_flags = bpy.types.UI_UL_list.filter_items_by_name(
+                self.filter_name, 
+                self.bitflag_filter_item, 
+                entries, 
+                "display_name", 
+                reverse=False
+            )
         
-        if item.has_model:
-            split.label(icon='MESH_DATA')
-        else:
-            split.label(icon='BLANK1')
+        return flt_flags, flt_neworder
 
 def get_entry_items(self, context):
     items = []
@@ -171,16 +182,14 @@ def get_texture_items(self, context, texture_list, base_path, color_number=0):
 
     return found_textures, names
     
-class LoadlistImporter(Operator, ImportHelper):
+class LoadlistImporter(Operator):
     bl_idname = "import_scene.gg2_loadlist"
     bl_label = "Import GG2 Loadlist"
     bl_options = {"PRESET", "UNDO"}
 
-    filepath: StringProperty(subtype="FILE_PATH")
-
     def execute(self, context):
         try:
-            config.temp_entries = core_parser.parse_list(self.filepath)
+            config.temp_entries = core_parser.parse_list(config.LOADTABLE_PATH)
         except Exception as e:
             self.report({"ERROR"}, f"Failed to import: {e}")
             return {"CANCELLED"}
@@ -201,8 +210,6 @@ class LoadlistEntrySelector(bpy.types.Operator):
         wm = context.window_manager
         wm.gg2_import_entries.clear() # Clear old data
         
-        
-        
         # Populate the CollectionProperty from your parsed config.temp_entries
         for entry in config.temp_entries:
             if not entry.has_model():
@@ -210,9 +217,8 @@ class LoadlistEntrySelector(bpy.types.Operator):
                 
             new_item = wm.gg2_import_entries.add()
             new_item.entry_index = entry.index
-            parsed_name = code_to_name(entry.name)
-            bracketed = f'[{entry.name}]'
-            new_item.display_name = f'{bracketed: <8}{parsed_name}' if parsed_name != entry.name else entry.name
+            new_item.internal_name = entry.name
+            new_item.display_name = code_to_name(entry.name)
             new_item.color_number = entry.colorNumber or 0
             new_item.has_model = bool(entry.has_model())
             
