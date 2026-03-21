@@ -93,7 +93,7 @@ def parse_key_frame(f):
 
 def parse_motion_bytes(data: bytes, action_name: str):
     try:
-        # 1. Unpack header in bulk
+        
         animationLen, key_count_header = struct.unpack_from("<HH", data, 2)
         track_count = struct.unpack_from("<B", data, 7)[0]
         ten_value, header_size = struct.unpack_from("<II", data, 8)
@@ -101,7 +101,6 @@ def parse_motion_bytes(data: bytes, action_name: str):
         if ten_value != 16:
             print(f"Warning: Expected value 16 at offset 8, found {ten_value} in {action_name}")
             
-        # 2. Parse tracks
         tracks = []
         aux = 0
         offset = 16
@@ -114,7 +113,6 @@ def parse_motion_bytes(data: bytes, action_name: str):
         if aux != key_count_header:
             print(f"Warning: Sum of track key counts ({aux}) does not match total key count ({key_count_header})")
 
-        # 3. Batch parse keyframes using raw offsets (Massive speedup here)
         for track in tracks:
             kf_offset = track.offset
             for _ in range(track.key_count):
@@ -128,7 +126,6 @@ def parse_motion_bytes(data: bytes, action_name: str):
                 
                 if presence_flags & 0x04:
                     q1, q2, q3, q4 = struct.unpack_from("<ffff", data, kf_offset)
-                    # GG2 uses x,y,z,w - Mathutils expects w,x,y,z
                     rot = mathutils.Quaternion((q4, q1, q2, q3)) 
                     kf_offset += 16
                 if presence_flags & 0x01:
@@ -175,6 +172,11 @@ class Entry:
     
     def get_normal_name(self):
         return self.normalname if self.normalname else (self.colorVariationSource.normalname if self.colorVariationSource else None)
+
+    def has_model(self):
+        if self.colorVariationSource:
+            return self.colorVariationSource.has_model()
+        return bool(self.modelname and self.modelname.strip())
 
     def read_null_terminated_string(self, data, offset):
         if offset == 0:

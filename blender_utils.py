@@ -119,71 +119,85 @@ def save_and_load_dds(byte_data, filepath):
         print(f"Failed to load image at {safe_filepath}.")
         return None
 
-def create_and_assign_material(meshes, material_name, texture_bytes=None, normal_bytes=None, comb_bytes=None, texture_names=None):
+def create_and_assign_material(meshes, material_name, texture_bytes=None, texture_names=None):
     temp_dir = tempfile.gettempdir()
     materials = []
 
-    for i in range(len(meshes)):
-        mat = bpy.data.materials.new(name=material_name)
-        mat.use_nodes = True
-        nodes = mat.node_tree.nodes
-        links = mat.node_tree.links
+    try:
+        for i in range(len(meshes)):
+            mat = bpy.data.materials.new(name=material_name)
+            mat.use_nodes = True
+            nodes = mat.node_tree.nodes
+            links = mat.node_tree.links
 
-        for node in nodes:
-            nodes.remove(node)
+            for node in nodes:
+                nodes.remove(node)
 
-        output_node = nodes.new(type="ShaderNodeOutputMaterial")
-        output_node.location = (300, 0)
-        bsdf_node = nodes.new(type="ShaderNodeBsdfPrincipled")
-        bsdf_node.location = (0, 0)
+            output_node = nodes.new(type="ShaderNodeOutputMaterial")
+            output_node.location = (300, 0)
+            bsdf_node = nodes.new(type="ShaderNodeBsdfPrincipled")
+            bsdf_node.location = (0, 0)
 
-        links.new(bsdf_node.outputs["BSDF"], output_node.inputs["Surface"])
+            links.new(bsdf_node.outputs["BSDF"], output_node.inputs["Surface"])
 
-        print(f"Creating material '{material_name}' for mesh {i} with texture index {meshes[i]['texture_idx']}")
-        if texture_bytes[meshes[i]["texture_idx"]]:
-            tex_filepath = os.path.join(temp_dir, f"{texture_names[meshes[i]['texture_idx']]}_diffuse.dds")
-            print(f"Using texture index {meshes[i]['texture_idx']} for mesh {i}, saving to {tex_filepath}")
-            img = save_and_load_dds(texture_bytes[meshes[i]["texture_idx"]], tex_filepath)
-            if img:
-                tex_node = nodes.new(type="ShaderNodeTexImage")
-                tex_node.location = (-300, 0)
-                tex_node.image = img
-                links.new(tex_node.outputs["Color"], bsdf_node.inputs["Base Color"])
-                links.new(tex_node.outputs["Alpha"], bsdf_node.inputs["Alpha"])
-    
-        if normal_bytes:
-            norm_filepath = os.path.join(temp_dir, f"{texture_names[meshes[i]['texture_idx']]}_normal.dds")
-            norm_img = save_and_load_dds(normal_bytes, norm_filepath)
-            if norm_img:
-                norm_img.colorspace_settings.name = "Non-Color"
-                norm_tex_node = nodes.new(type="ShaderNodeTexImage")
-                norm_tex_node.location = (-600, -300)
-                norm_tex_node.image = norm_img
+            print(f"Creating material '{material_name}' for mesh {i} with texture index {meshes[i]['texture_idx']}")
+            try:
+                if texture_bytes[meshes[i]["texture_idx"]][0]:
+                    tex_filepath = os.path.join(temp_dir, f"{texture_names[meshes[i]['texture_idx']][0]}_diffuse.dds")
+                    print(f"Using texture index {meshes[i]['texture_idx']} for mesh {i}, saving to {tex_filepath}")
+                    img = save_and_load_dds(texture_bytes[meshes[i]["texture_idx"]][0], tex_filepath)
+                    if img:
+                        tex_node = nodes.new(type="ShaderNodeTexImage")
+                        tex_node.location = (-300, 0)
+                        tex_node.image = img
+                        links.new(tex_node.outputs["Color"], bsdf_node.inputs["Base Color"])
+                        links.new(tex_node.outputs["Alpha"], bsdf_node.inputs["Alpha"])
+            except Exception as e:
+                print(f"Error processing diffuse texture for mesh {i}: {e}")
+        
+            try:
+                if texture_bytes[meshes[i]["texture_idx"]][1]:
+                    print(f"Mesh {i} has normal texture at index {meshes[i]['texture_idx']}, saving to {temp_dir}")
+                    norm_filepath = os.path.join(temp_dir, f"{texture_names[meshes[i]['texture_idx']][1]}_normal.dds")
+                    norm_img = save_and_load_dds(texture_bytes[meshes[i]["texture_idx"]][1], norm_filepath)
+                    if norm_img:
+                        norm_img.colorspace_settings.name = "Non-Color"
+                        norm_tex_node = nodes.new(type="ShaderNodeTexImage")
+                        norm_tex_node.location = (-600, -300)
+                        norm_tex_node.image = norm_img
 
-                norm_map_node = nodes.new(type="ShaderNodeNormalMap")
-                norm_map_node.location = (-300, -300)
+                        norm_map_node = nodes.new(type="ShaderNodeNormalMap")
+                        norm_map_node.location = (-300, -300)
 
-                links.new(norm_tex_node.outputs["Color"], norm_map_node.inputs["Color"])
-                links.new(norm_map_node.outputs["Normal"], bsdf_node.inputs["Normal"])
+                        links.new(norm_tex_node.outputs["Color"], norm_map_node.inputs["Color"])
+                        links.new(norm_map_node.outputs["Normal"], bsdf_node.inputs["Normal"])
+            except Exception as e:
+                print(f"Error processing normal texture for mesh {i}: {e}")
 
-        if comb_bytes:
-            comb_filepath = os.path.join(temp_dir, f"{texture_names[meshes[i]['texture_idx']]}_comb.dds")
-            comb_img = save_and_load_dds(comb_bytes, comb_filepath)
-            if comb_img:
-                comb_tex_node = nodes.new(type="ShaderNodeTexImage")
-                comb_tex_node.location = (-900, -600)
-                comb_tex_node.image = comb_img
-                rgb_separator = nodes.new("ShaderNodeSeparateColor")
-                rgb_separator.location = (300, -600)
+            try:
+                if texture_bytes[meshes[i]["texture_idx"]][2]:
+                    comb_filepath = os.path.join(temp_dir, f"{texture_names[meshes[i]['texture_idx']][2]}_comb.dds")
+                    comb_img = save_and_load_dds(texture_bytes[meshes[i]["texture_idx"]][2], comb_filepath)
+                    if comb_img:
+                        comb_tex_node = nodes.new(type="ShaderNodeTexImage")
+                        comb_tex_node.location = (-900, -600)
+                        comb_tex_node.image = comb_img
+                        rgb_separator = nodes.new("ShaderNodeSeparateColor")
+                        rgb_separator.location = (300, -600)
+                        
+                        links.new(comb_tex_node.outputs["Color"], rgb_separator.inputs["Color"])
+            except Exception as e:
+                print(f"Error processing combined texture for mesh {i}: {e}")
                 
-                links.new(comb_tex_node.outputs["Color"], rgb_separator.inputs["Color"])
-                #links.new(rgb_separator.outputs["Red"], bsdf_node.inputs["IOR"])
-                
-        materials.append(mat)
+            materials.append(mat)
 
-    for i, obj in enumerate(meshes):
+        for i, obj in enumerate(meshes):
             obj["mesh"].data.materials.append(materials[i])
-    return mat
+            
+    except Exception as e:
+        print(f"Error in create_and_assign_material: {e}")
+        
+    return materials[0] if materials else None
 
 def _findall(p, s):
     i = s.find(p)
@@ -228,15 +242,13 @@ def build_blender_mesh(mesh_name, vbuf, ibuf, bones_data, target_collection, arm
     num_verts = len(vbuf) // stride
     vertices = []
 
-    # 1. Parse Vertex Positions
     for i in range(num_verts):
         vx, vy, vz = struct.unpack_from("<3f", vbuf, i * stride)
         vertices.append((vx, vy, vz))
 
-    # 2. Parse Faces (Assumes _strip_to_triangles exists in your scope)
     faces = _strip_to_triangles(ibuf)
 
-    # 3. Create Blender Objects
+    # to create Blender Objects
     mesh = bpy.data.meshes.new(mesh_name)
     obj = bpy.data.objects.new(mesh_name, mesh)
     target_collection.objects.link(obj)
@@ -244,26 +256,22 @@ def build_blender_mesh(mesh_name, vbuf, ibuf, bones_data, target_collection, arm
     mesh.from_pydata(vertices, [], faces)
     mesh.update()
 
-    # 4. Setup UV Map
     uv_layer = mesh.uv_layers.new(name="UVMap")
     for loop in mesh.loops:
         v_idx = loop.vertex_index
-        # With a 64-byte stride, the UV offset (stride - 16) is exactly 48
         u, v = struct.unpack_from("<2f", vbuf, (v_idx * stride) + 48)
         uv_layer.data[loop.index].uv = (u, 1.0 - v)
 
-    # 5. Setup Vertex Groups & Weights (if rigged)
     if arm_obj and bones_data:
-        # Create vertex groups for all bones beforehand
+        
         for b in bones_data:
             obj.vertex_groups.new(name=b["name"])
 
         for v_idx in range(num_verts):
-            # With a 64-byte stride, the weight offset (stride - 8) is exactly 56
+            
             weight_offset = (v_idx * stride) + 56
             weight_data = vbuf[weight_offset : weight_offset + 8]
             
-            # Assumes _parse_weights exists in your scope
             indices, weights = _parse_weights(weight_data)
 
             for i in range(4):
@@ -352,7 +360,6 @@ def create_blender_mesh_from_afb(name, data=None, target_collection=None):
     if offset != -1:
         offset += 4
         
-        # unpack_from reads directly from the buffer at the given offset
         list_size = struct.unpack_from("<I", data, offset)[0]
         offset += 4 # skips lenght
         
@@ -362,14 +369,14 @@ def create_blender_mesh_from_afb(name, data=None, target_collection=None):
 
         while offset < end_offset:
             str_length = struct.unpack_from("<I", data, offset)[0]
-            offset += 4 # skip next TXTF or end of list
+            offset += 4
             
             texture_name = data[offset : offset + str_length].decode("utf-8", errors="ignore")
             textures.append(texture_name)
             print(f"Found texture: {texture_name}")
             
             offset += str_length
-            offset += 4 # skip next TXTF or end of list
+            offset += 4
         
     # MESH
     created_meshes = []

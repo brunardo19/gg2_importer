@@ -10,16 +10,42 @@ from . import config
 from . import core_parser
 from . import blender_utils
 
+import time
+
+
+
 class GG2EntryItem(bpy.types.PropertyGroup):
     entry_index: IntProperty()
     display_name: StringProperty()
     color_number: IntProperty()
     has_model: BoolProperty()
+    
+def code_to_name(code):
+    if not isinstance(code, str) or len(code) < 2:
+        return code
+
+    try:
+        master = config.DISPLAY_NAMES_1[code[0]]
+        
+        if code[1:3] == "CP":
+            return f"{master} Capture {code[3:]}".strip()
+            
+        if code[1] in {"H", "J", "I"}:
+            rank = config.DISPLAY_NAMES_2[code[1]]
+            return f"{master} {rank} {code[2:]}".strip()
+
+        rank = config.DISPLAY_NAMES_2[code[1]]
+        role = config.DISPLAY_NAMES_3[code[2]]
+        return f"{master} {rank} {role} {code[3:]}".strip()
+
+    except (KeyError, IndexError) as e:
+        print(f"Warning: Could not parse code '{code}'. Reason: {e}")
+        return code
+        
 
 # control how the row looks
 class GG2_UL_EntryList(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        # This is where the magic happens. You can format the row however you like.
         split = layout.split(factor=0.2)
         split.label(text=f"[{item.entry_index}]")
         
@@ -27,7 +53,6 @@ class GG2_UL_EntryList(bpy.types.UIList):
         split.label(text=item.display_name)
         split.label(text=f"Color: {item.color_number}")
         
-        # Add an icon if it has a model
         if item.has_model:
             split.label(icon='MESH_DATA')
         else:
@@ -35,7 +60,6 @@ class GG2_UL_EntryList(bpy.types.UIList):
 
 def get_entry_items(self, context):
     items = []
-    # Read from shared state file instead of global
     for entry in config.temp_entries:
         if not entry.get_model_name() and not entry.colorVariationSource:
             continue
@@ -45,20 +69,40 @@ def get_entry_items(self, context):
         items.append((identifier, display_name, f"Import entry {entry.index}"))
     return items
 
+def get_normal_and_combined_textures(self, context, texture_set, base_path):
+    base_path = base_path[:-4] # remove the .xt and the color number
+    print(f"Looking for normal and combined textures with base path: {base_path}")
+    normal_path = f"{base_path}0N.XT".lower()
+    combined_path = f"{base_path}0C.XT".lower()
+    
+    for entry in config.temp_entries:
+        if entry.get_normal_name() and entry.get_normal_name().lower() == normal_path:
+            af_path = config.DATA_PATH / f"AF{entry.pkmnumber}.PKM"
+            if af_path.exists():
+                texture_set[1] = (entry.extract_file_from_pkm(af_path, entry.index + 1204 * 2))
+                print(f"Found normal texture: {entry.get_normal_name()} at index {entry.index + 1204 * 2} in {af_path}")
+        
+        if entry.get_texturec_name() and entry.get_texturec_name().lower() == combined_path:
+            af_path = config.DATA_PATH / f"AF{entry.pkmnumber}.PKM"
+            if af_path.exists():
+                texture_set[2] = (entry.extract_file_from_pkm(af_path, entry.index + 1204))
+                print(f"Found combined texture: {entry.get_texturec_name()} at index {entry.index + 1204} in {af_path}")
+                
+        if texture_set[1] and texture_set[2]:
+            break
+    
+
 def get_texture_items(self, context, texture_list, base_path, color_number=0):
     found_textures = []
     
     base_path = base_path.strip('\x00') + '\\'
-        
-    # Build our target paths map for reverse lookup
-    # Format: { "data/model/character/vh/vh3.dds": "VH3.DDS" }
+    
     target_paths = {}
     for tex in texture_list:
         tex = tex.strip('\x00')
         # In the load table, textures are stored as uppercase and with .XT extension instead of .DDS for some reason
         tex = tex.replace("S.DDS", "C.DDS") # Because fuck this game
         search_tex = tex.upper().replace(".DDS", ".XT")
-        # Swap '0' for the color number on diffuses (ignore normals/combined ending in N or C)
         search_tex = search_tex.replace("_COLOR", "") # Because fuck this game
         search_tex = search_tex.replace("_00", "") # Because fuck this game
         is_normal_or_comb = search_tex.upper().endswith("N.XT") or search_tex.upper().endswith("C.XT")
@@ -78,30 +122,43 @@ def get_texture_items(self, context, texture_list, base_path, color_number=0):
         tex_name = target_paths[target_path_key]
         found = False
         
-        for entry in config.temp_entries:
+        for i,entry in enumerate(config.temp_entries):
             # Check Diffuse
             if entry.texturename and entry.texturename.lower() == target_path_key:
                 td_path = config.DATA_PATH / f"TD{entry.pkmnumber}{entry.colorNumber}.PKM"
                 if td_path.exists():
-                    found_textures.append(entry.extract_file_from_pkm(td_path, entry.index))
+                    texture_set = [None, None, None]
+                    texture_set[0] =(entry.extract_file_from_pkm(td_path, entry.index))
+                    get_normal_and_combined_textures(self, context, texture_set, target_path_key)
                     names.append(tex_name)
+                    found_textures.append(texture_set)
                     found = True
                     break
             
             # Check Combined Data
             if entry.get_texturec_name() and entry.get_texturec_name().lower() == target_path_key:
-                af_path = config.DATA_PATH / f"AF{entry.pkmnumber}.PKM"
-                if af_path.exists():
-                    found_textures.append(entry.extract_file_from_pkm(af_path, entry.index + 1204))
+                #af_path = config.DATA_PATH / f"AF{entry.pkmnumber}.PKM"
+                #if af_path.exists():
+                    found_textures.append(None)
+
+                    #There are some cases where normal or combined data for some reason doesnt exist in the AFB
+                    #But I need to add a placeholder to keep the lists to work with the material index for now
+
+                    #found_textures.append(entry.extract_file_from_pkm(af_path, entry.index + 1204))
                     names.append(tex_name)
                     found = True
                     break
             
             # Check Normal Maps
             if entry.get_normal_name() and entry.get_normal_name().lower() == target_path_key:
-                af_path = config.DATA_PATH / f"AF{entry.pkmnumber}.PKM"
-                if af_path.exists():
-                    found_textures.append(entry.extract_file_from_pkm(af_path, entry.index + 1204 * 2))
+                #af_path = config.DATA_PATH / f"AF{entry.pkmnumber}.PKM"
+                #if af_path.exists():
+                    found_textures.append(None)
+
+                    #There are some cases where normal or combined data for some reason doesnt exist in the AFB
+                    #But I need to add a placeholder to keep the lists to work with the material index for now
+
+                    #found_textures.append(entry.extract_file_from_pkm(af_path, entry.index + 1204 * 2))
                     names.append(tex_name)
                     found = True
                     break
@@ -114,7 +171,6 @@ def get_texture_items(self, context, texture_list, base_path, color_number=0):
 
     return found_textures, names
     
-
 class LoadlistImporter(Operator, ImportHelper):
     bl_idname = "import_scene.gg2_loadlist"
     bl_label = "Import GG2 Loadlist"
@@ -145,16 +201,20 @@ class LoadlistEntrySelector(bpy.types.Operator):
         wm = context.window_manager
         wm.gg2_import_entries.clear() # Clear old data
         
+        
+        
         # Populate the CollectionProperty from your parsed config.temp_entries
         for entry in config.temp_entries:
-            if not entry.get_model_name() and not entry.colorVariationSource:
+            if not entry.has_model():
                 continue
                 
             new_item = wm.gg2_import_entries.add()
             new_item.entry_index = entry.index
-            new_item.display_name = entry.name or "Unknown"
+            parsed_name = code_to_name(entry.name)
+            bracketed = f'[{entry.name}]'
+            new_item.display_name = f'{bracketed: <8}{parsed_name}' if parsed_name != entry.name else entry.name
             new_item.color_number = entry.colorNumber or 0
-            new_item.has_model = bool(entry.get_model_name())
+            new_item.has_model = bool(entry.has_model())
             
         # Call the properties dialog instead of the search popup
         return context.window_manager.invoke_props_dialog(self, width=500)
@@ -165,7 +225,6 @@ class LoadlistEntrySelector(bpy.types.Operator):
         
         layout.label(text="Choose an entry to import:", icon='IMPORT')
         
-        # Draw the UIList
         # template_list(class_name, list_id, dataptr, propname, active_dataptr, active_propname)
         layout.template_list(
             "GG2_UL_EntryList", 
@@ -175,6 +234,8 @@ class LoadlistEntrySelector(bpy.types.Operator):
         )
     
     def execute(self, context):
+        start_time = time.perf_counter()
+
         wm = context.window_manager
         
         # Get the selected index from the UIList
@@ -200,9 +261,6 @@ class LoadlistEntrySelector(bpy.types.Operator):
 
         created_assets = blender_utils.create_blender_mesh_from_afb(chosen_entry.name, data=model_data)
         
-        #TODO - created_assets is now a dict with meshes and texture id, create a new function in blender_utils
-        # to get the TXTL and then a new function here to look for that path in the entries
-        
         base_path = chosen_entry.get_model_name().rsplit('\\', 1)[0]
         
         textures, texture_names = get_texture_items(self, context, texture_list=created_assets.get("textures", []), base_path=base_path, color_number=chosen_entry.colorNumber)
@@ -213,12 +271,7 @@ class LoadlistEntrySelector(bpy.types.Operator):
                 meshes=created_assets.get("meshes"),
                 material_name=f"{chosen_entry.name}_Mat",
                 texture_names= texture_names,
-                texture_bytes= textures,
-                normal_bytes= None,
-                comb_bytes= None,
-                # texture_bytes= textures,
-                # normal_bytes=out.get("normal"),
-                # comb_bytes=out.get("combined_data"),
+                texture_bytes= textures
             )
 
             armature = created_assets.get("armature")
@@ -241,15 +294,25 @@ class LoadlistEntrySelector(bpy.types.Operator):
                         first_action = bpy.data.actions.get(first_action_name)
                         if first_action:
                             armature.animation_data.action = first_action
+                            
+                    end_time = time.perf_counter()
 
-                    self.report({"INFO"}, f"Successfully imported: {chosen_entry.name} and {imported_count} animations.")
+                    self.report({"INFO"}, f"Successfully imported: {chosen_entry.name} and {imported_count} animations. Execution took {end_time - start_time:.4f} seconds.")
                 else:
-                    self.report({"INFO"}, f"Successfully imported: {chosen_entry.name} (No animations found).")
+                    end_time = time.perf_counter()
+                    self.report({"INFO"}, f"Successfully imported: {chosen_entry.name} (No animations found). Execution took {end_time - start_time:.4f} seconds.")
             else:
-                self.report({"INFO"}, f"Successfully imported: {chosen_entry.name}")
+                end_time = time.perf_counter()
+                self.report({"INFO"}, f"Successfully imported: {chosen_entry.name}. Execution took {end_time - start_time:.4f} seconds.")
         else:
             self.report({"ERROR"}, f"Failed to import: {chosen_entry.name} model data invalid.")
             return {"CANCELLED"}
+        
+        end_time = time.perf_counter()
+
+        execution_time = end_time - start_time
+
+        print(f"Execution took {execution_time:.4f} seconds")
 
         return {"FINISHED"}
 
