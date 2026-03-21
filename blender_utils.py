@@ -140,11 +140,11 @@ def create_and_assign_material(meshes, material_name, texture_bytes=None, textur
 
             links.new(bsdf_node.outputs["BSDF"], output_node.inputs["Surface"])
 
-            print(f"Creating material '{material_name}' for mesh {i} with texture index {meshes[i]['texture_idx']}")
+            #print(f"Creating material '{material_name}' for mesh {i} with texture index {meshes[i]['texture_idx']}")
             try:
                 if texture_bytes[meshes[i]["texture_idx"]][0]:
                     tex_filepath = os.path.join(temp_dir, f"{texture_names[meshes[i]['texture_idx']][0]}_diffuse.dds")
-                    print(f"Using texture index {meshes[i]['texture_idx']} for mesh {i}, saving to {tex_filepath}")
+                    #print(f"Using texture index {meshes[i]['texture_idx']} for mesh {i}, saving to {tex_filepath}")
                     img = save_and_load_dds(texture_bytes[meshes[i]["texture_idx"]][0], tex_filepath)
                     if img:
                         tex_node = nodes.new(type="ShaderNodeTexImage")
@@ -157,7 +157,7 @@ def create_and_assign_material(meshes, material_name, texture_bytes=None, textur
         
             try:
                 if texture_bytes[meshes[i]["texture_idx"]][1]:
-                    print(f"Mesh {i} has normal texture at index {meshes[i]['texture_idx']}, saving to {temp_dir}")
+                    #print(f"Mesh {i} has normal texture at index {meshes[i]['texture_idx']}, saving to {temp_dir}")
                     norm_filepath = os.path.join(temp_dir, f"{texture_names[meshes[i]['texture_idx']][1]}_normal.dds")
                     norm_img = save_and_load_dds(texture_bytes[meshes[i]["texture_idx"]][1], norm_filepath)
                     if norm_img:
@@ -373,7 +373,7 @@ def create_blender_mesh_from_afb(name, data=None, target_collection=None):
             
             texture_name = data[offset : offset + str_length].decode("utf-8", errors="ignore")
             textures.append(texture_name)
-            print(f"Found texture: {texture_name}")
+            #print(f"Found texture: {texture_name}")
             
             offset += str_length
             offset += 4
