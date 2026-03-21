@@ -1,5 +1,6 @@
 import math
 import re
+from pathlib import Path
 
 import bpy
 from bpy_extras.io_utils import ImportHelper
@@ -12,6 +13,31 @@ from . import blender_utils
 
 import time
 
+
+class GG2ImporterPreferences(bpy.types.AddonPreferences):
+    bl_idname = __package__
+
+    gg2_dir: StringProperty(
+        name="GG2 Folder Path",
+        description="Path to the Guilty Gear 2 Overture installation folder",
+        subtype='DIR_PATH',
+        default=r"C:\Program Files (x86)\Steam\steamapps\common\GG2"
+    )
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "gg2_dir")
+
+def update_config_paths(context):
+    prefs = context.preferences.addons.get(__package__)
+    if prefs and hasattr(prefs, 'preferences'):
+        base_path = prefs.preferences.gg2_dir
+    else:
+        base_path = r"C:\Program Files (x86)\Steam\steamapps\common\GG2"
+        
+    config.GG2_PATH = Path(base_path)
+    config.LOADTABLE_PATH = config.GG2_PATH / "loadtable.bin"
+    config.DATA_PATH = config.GG2_PATH / "data"
 
 
 class GG2EntryItem(bpy.types.PropertyGroup):
@@ -100,8 +126,7 @@ def get_normal_and_combined_textures(self, context, texture_set, base_path):
                 print(f"Found combined texture: {entry.get_texturec_name()} at index {entry.index + 1204} in {af_path}")
                 
         if texture_set[1] and texture_set[2]:
-            break
-    
+            break  
 
 def get_texture_items(self, context, texture_list, base_path, color_number=0):
     found_textures = []
@@ -189,6 +214,7 @@ class LoadlistImporter(Operator):
 
     def execute(self, context):
         try:
+            update_config_paths(context)
             config.temp_entries = core_parser.parse_list(config.LOADTABLE_PATH)
         except Exception as e:
             self.report({"ERROR"}, f"Failed to import: {e}")
@@ -326,7 +352,7 @@ class LoadlistEntrySelector(bpy.types.Operator):
 def menu_func_import(self, context):
     self.layout.operator(LoadlistImporter.bl_idname, text="Guilty Gear 2 Overture Loadlist (.bin)")
 
-classes = (GG2EntryItem, GG2_UL_EntryList, LoadlistEntrySelector, LoadlistImporter)
+classes = (GG2EntryItem, GG2_UL_EntryList, LoadlistEntrySelector, LoadlistImporter, GG2ImporterPreferences)
 
 def register():
     for cls in classes:
