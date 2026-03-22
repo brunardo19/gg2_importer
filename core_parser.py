@@ -177,6 +177,57 @@ class Entry:
         if self.colorVariationSource:
             return self.colorVariationSource.has_model()
         return bool(self.modelname and self.modelname.strip())
+    
+    def get_asb_bytes(self):
+        if self.asbname:
+            asb_path = config.DATA_PATH / "ASB.PKM"
+            if asb_path.exists():
+                return self.extract_file_from_pkm(asb_path, self.index)
+        elif self.colorVariationSource:
+            return self.colorVariationSource.get_asb_bytes()
+        return None
+
+    def get_OnCreate_extras(self, target_name="OnCreate"):
+        asb_bytes = self.get_asb_bytes()
+        if not asb_bytes:
+            print(f"ASB data not found for entry {self.name}")
+            return None
+        
+        f = io.BytesIO(asb_bytes)
+        
+        # Parse Header
+        header = f.read(16)
+        _, func_count, offset_idx, bytecode_idx, _ = struct.unpack("<6sHHHI", header)
+                    
+        bytecode_base_addr = bytecode_idx * 16
+        offset_table_addr = offset_idx * 16
+
+        target_index = -1
+        f.seek(0x10)
+        for i in range(func_count):
+            name = f.read(8).decode('ascii').strip('\x00')
+            if name == target_name:
+                target_index = i
+                break
+        
+        if target_index == -1:
+            print(f"Function {target_name} not found in ASB for entry {self.name}")
+            return None
+        
+        # each entry is 4 bytes
+        f.seek(offset_table_addr + (target_index * 4))
+        relative_offset = struct.unpack("<I", f.read(4))[0]
+        absolute_offset = bytecode_base_addr + relative_offset
+
+        extras = []
+        f.seek(absolute_offset)
+        op_code = f.read(2)
+        while op_code == b'\x2D\x00':
+            bone_bind_index = struct.unpack("<H", f.read(2))[0]
+            extra_model_name = f.read(4).strip(b'\x00').decode('ascii')[::-1]
+            extras.append((bone_bind_index, extra_model_name))
+            op_code = f.read(2)
+        return extras
 
     def read_null_terminated_string(self, data, offset):
         if offset == 0:
@@ -236,12 +287,21 @@ class Entry:
                 print(f"Extracted {target_entry.asbname} from {asb_path}")
         return out
 
+    def get_mix_entry(self):
+        if self.mixname:
+            mix_path = config.DATA_PATH / f"MIX.PKM"
+            if mix_path.exists():
+                return self
+        elif self.colorVariationSource:
+            return self.colorVariationSource.get_mix_entry()
+        return None
+
     def get_animations(self):
         out = []
         mix_data_map = []
-        target_entry = self.colorVariationSource if self.colorVariationSource else self
+        target_entry = self.get_mix_entry()
 
-        if target_entry.mixname:
+        if target_entry and target_entry.mixname:
             mix_path = config.DATA_PATH / "MIX.PKM"
             if mix_path.exists():
                 mix_bytes = target_entry.extract_file_from_pkm(mix_path, target_entry.index)
@@ -266,7 +326,7 @@ class Entry:
                 if mot_idx in batch_results:
                     out.append((slot, batch_results[mot_idx]))
                 else:
-                    print(f"Warning: Motion index {mot_idx} not found in PKM.")
+                    print(f"Warning: Motion index {mot_idx} not found in PKM {mot_pkm_path.name} for entry {target_entry.name}")
         else:
             print(f"Warning: Invalid motIndex {target_entry.motIndex} for entry {target_entry.name}")
 
@@ -282,7 +342,6 @@ class Entry:
         self.normalname = self.read_null_terminated_string(data, 0xCEF0 + normaloffset - 1) if normaloffset != 0 else None
         self.mixname = self.read_null_terminated_string(data, 0xCEF0 + mixoffset - 1) if mixoffset != 0 else None
         self.asbname = self.read_null_terminated_string(data, 0xCEF0 + asboffset - 1) if asboffset != 0 else None
-    
 
 def parse_list(path):
     with open(path, "rb") as f:

@@ -65,9 +65,8 @@ def code_to_name(code):
         return f"{master} {rank} {role} {code[3:]}".strip()
 
     except (KeyError, IndexError) as e:
-        print(f"Warning: Could not parse code '{code}'. Reason: {e}")
+        #print(f"Warning: Could not parse code '{code}'. Reason: {e}")
         return code
-        
 
 # control how the row looks
 class GG2_UL_EntryList(bpy.types.UIList):
@@ -94,6 +93,13 @@ class GG2_UL_EntryList(bpy.types.UIList):
             )
         
         return flt_flags, flt_neworder
+
+# Rows for extras
+class GG2ExtraItem(bpy.types.PropertyGroup):
+    import_it: BoolProperty(name="Import", default=True)
+    extra_name: StringProperty()
+    entry_index: IntProperty()
+    bone_index: IntProperty()
 
 def get_entry_items(self, context):
     items = []
@@ -206,7 +212,80 @@ def get_texture_items(self, context, texture_list, base_path, color_number=0):
     print(f"Found {len(found_textures)} matching textures")
 
     return found_textures, names
+
+def import_full_entry(operator, context, chosen_entry, start_time):
+    out = chosen_entry.extract_files()
+    print(f"Extracted files: {out.keys()}")
+
+    model_data = out.get("model")
+    if not model_data:
+        operator.report({"ERROR"}, f"No model data found for {chosen_entry.name}.")
+        return None
+
+    created_assets = blender_utils.create_blender_mesh_from_afb(chosen_entry.name, data=model_data)
+
+    base_path = chosen_entry.get_model_name().rsplit('\\', 1)[0]
+
+    textures, texture_names = get_texture_items(
+        operator,
+        context,
+        texture_list=created_assets.get("textures", []),
+        base_path=base_path,
+        color_number=chosen_entry.colorNumber,
+    )
+
+    if created_assets:
+        blender_utils.create_and_assign_material(
+            meshes=created_assets.get("meshes"),
+            material_name=f"{chosen_entry.name}_Mat",
+            texture_names=texture_names,
+            texture_bytes=textures,
+        )
+
+        armature = created_assets.get("armature")
+        if armature:
+            armature.rotation_euler[0] = math.radians(90)
+            animations = chosen_entry.get_animations()
+            if animations:
+                print(f"Importing {len(animations)} animations for {chosen_entry.name}...")
+                imported_count = 0
+
+                for slot, anim_bytes in animations:
+                    action_name = f"{chosen_entry.name}_Anim_{slot}"
+                    motion_data = core_parser.parse_motion_bytes(anim_bytes, action_name)
+                    if motion_data:
+                        blender_utils.apply_motion_to_armature(armature, motion_data, action_name)
+                        imported_count += 1
+
+                if imported_count > 1 and armature.animation_data:
+                    first_action_name = f"{chosen_entry.name}_Anim_{animations[1][0]}" # Most first animations are broken
+                    first_action = bpy.data.actions.get(first_action_name)
+                    if first_action:
+                        armature.animation_data.action = first_action
+                elif imported_count == 1 and armature.animation_data:
+                    first_action_name = f"{chosen_entry.name}_Anim_{animations[0][0]}" # If there's only one animation, set it as the active action
+                    first_action = bpy.data.actions.get(first_action_name)
+                    if first_action:
+                        armature.animation_data.action = first_action
+
+                end_time = time.perf_counter()
+                operator.report({"INFO"}, f"Successfully imported: {chosen_entry.name} and {imported_count} animations. Execution took {end_time - start_time:.4f} seconds.")
+            else:
+                end_time = time.perf_counter()
+                operator.report({"INFO"}, f"Successfully imported: {chosen_entry.name} (No animations found). Execution took {end_time - start_time:.4f} seconds.")
+        else:
+            end_time = time.perf_counter()
+            operator.report({"INFO"}, f"Successfully imported: {chosen_entry.name}. Execution took {end_time - start_time:.4f} seconds.")
+    else:
+        operator.report({"ERROR"}, f"Failed to import: {chosen_entry.name} model data invalid.")
+        return None
+
+    if armature:
+        return armature
     
+    meshes = created_assets.get("meshes")
+    return meshes[0]["mesh"] if meshes else None
+
 class LoadlistImporter(Operator):
     bl_idname = "import_scene.gg2_loadlist"
     bl_label = "Import GG2 Loadlist"
@@ -264,97 +343,111 @@ class LoadlistEntrySelector(bpy.types.Operator):
             wm, "gg2_import_entries", 
             wm, "gg2_active_entry_index"
         )
-    
-    def execute(self, context):
-        start_time = time.perf_counter()
 
+    def execute(self, context):
+            start_time = time.perf_counter()
+            wm = context.window_manager
+            
+            if not wm.gg2_import_entries:
+                return {'CANCELLED'}
+                
+            selected_item = wm.gg2_import_entries[wm.gg2_active_entry_index]
+            chosen_index = selected_item.entry_index
+            
+            chosen_entry = next((e for e in config.temp_entries if e.index == chosen_index), None)
+            
+            if not chosen_entry:
+                self.report({"ERROR"}, "Selected entry could not be found.")
+                return {"CANCELLED"}
+            
+            extras = chosen_entry.get_OnCreate_extras()
+            extras_entries = []
+            if extras:
+                print(f"Found OnCreate extras for {chosen_entry.name}: {extras}")
+                for extra in extras:
+                    for i in range(chosen_entry.index + 1, 1204):
+                        if extra[1] == config.temp_entries[i].name and (chosen_entry.colorNumber == config.temp_entries[i].colorNumber or config.temp_entries[i].colorNumber > 5):
+                            extras_entries.append((extra[0], extra[1], config.temp_entries[i]))
+                            break
+            
+            # If extras exist, pop up the new selection dialog
+            if extras_entries:
+                wm.gg2_import_extras.clear()
+                for ext in extras_entries:
+                    new_extra = wm.gg2_import_extras.add()
+                    new_extra.bone_index = ext[0]
+                    new_extra.extra_name = ext[1]
+                    new_extra.entry_index = ext[2].index
+                    new_extra.import_it = True
+                    
+                bpy.ops.import_scene.gg2_loadlist_extras_selector('INVOKE_DEFAULT', master_entry_index=chosen_index)
+                return {"FINISHED"}
+                
+            # No extras found, just import the master armature normally
+            import_full_entry(self, context, chosen_entry, start_time)
+            bpy.context.view_layer.update()
+            
+            return {"FINISHED"}
+
+class LoadlistExtrasSelector(bpy.types.Operator):
+    bl_idname = "import_scene.gg2_loadlist_extras_selector"
+    bl_label = "Extra Import Options"
+    bl_options = {"INTERNAL"}
+
+    master_entry_index: IntProperty()
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=400)
+
+    def draw(self, context):
+        layout = self.layout
         wm = context.window_manager
         
-        # Get the selected index from the UIList
-        if not wm.gg2_import_entries:
+        layout.label(text="The ASB OnCreate function for this entry indicates that there are extra models to import. Choose which ones to include:")
+        box = layout.box()
+        for item in wm.gg2_import_extras:
+            box.prop(item, "import_it", text=f"{item.extra_name} (Bone {item.bone_index})")
+
+    def execute(self, context):
+        start_time = time.perf_counter()
+        wm = context.window_manager
+        
+        chosen_entry = next((e for e in config.temp_entries if e.index == self.master_entry_index), None)
+        if not chosen_entry:
             return {'CANCELLED'}
             
-        selected_item = wm.gg2_import_entries[wm.gg2_active_entry_index]
-        chosen_index = selected_item.entry_index
+        # Import the main character
+        master_armature = import_full_entry(self, context, chosen_entry, start_time)
         
-        chosen_entry : core_parser.Entry = next((e for e in config.temp_entries if e.index == chosen_index), None)
-        
-        if not chosen_entry:
-            self.report({"ERROR"}, "Selected entry could not be found.")
-            return {"CANCELLED"}
+        if not master_armature:
+            return {'CANCELLED'}
 
-        out = chosen_entry.extract_files()
-        print(f"Extracted files: {out.keys()}")
-
-        model_data = out.get("model")
-        if not model_data:
-            self.report({"ERROR"}, f"No model data found for {chosen_entry.name}.")
-            return {"CANCELLED"}
-
-        created_assets = blender_utils.create_blender_mesh_from_afb(chosen_entry.name, data=model_data)
-        
-        base_path = chosen_entry.get_model_name().rsplit('\\', 1)[0]
-        
-        textures, texture_names = get_texture_items(self, context, texture_list=created_assets.get("textures", []), base_path=base_path, color_number=chosen_entry.colorNumber)
-        
-
-        if created_assets:
-            blender_utils.create_and_assign_material(
-                meshes=created_assets.get("meshes"),
-                material_name=f"{chosen_entry.name}_Mat",
-                texture_names= texture_names,
-                texture_bytes= textures
-            )
-
-            armature = created_assets.get("armature")
-            if armature:
-                armature.rotation_euler[0] = math.radians(90)
-                animations = chosen_entry.get_animations()
-                if animations:
-                    print(f"Importing {len(animations)} animations for {chosen_entry.name}...")
-                    imported_count = 0
-
-                    for slot, anim_bytes in animations:
-                        action_name = f"{chosen_entry.name}_Anim_{slot}"
-                        motion_data = core_parser.parse_motion_bytes(anim_bytes, action_name)
-                        if motion_data:
-                            blender_utils.apply_motion_to_armature(armature, motion_data, action_name)
-                            imported_count += 1
-
-                    if imported_count > 0 and armature.animation_data:
-                        first_action_name = f"{chosen_entry.name}_Anim_{animations[0][0]}"
-                        first_action = bpy.data.actions.get(first_action_name)
-                        if first_action:
-                            armature.animation_data.action = first_action
-                            
-                    end_time = time.perf_counter()
-
-                    self.report({"INFO"}, f"Successfully imported: {chosen_entry.name} and {imported_count} animations. Execution took {end_time - start_time:.4f} seconds.")
-                else:
-                    end_time = time.perf_counter()
-                    self.report({"INFO"}, f"Successfully imported: {chosen_entry.name} (No animations found). Execution took {end_time - start_time:.4f} seconds.")
-            else:
-                end_time = time.perf_counter()
-                self.report({"INFO"}, f"Successfully imported: {chosen_entry.name}. Execution took {end_time - start_time:.4f} seconds.")
-        else:
-            self.report({"ERROR"}, f"Failed to import: {chosen_entry.name} model data invalid.")
-            return {"CANCELLED"}
-        
-        end_time = time.perf_counter()
-
-        execution_time = end_time - start_time
-
-        print(f"Execution took {execution_time:.4f} seconds")
+        # Import checked extras and bind them
+        for item in wm.gg2_import_extras:
+            if item.import_it:
+                extra_entry = next((e for e in config.temp_entries if e.index == item.entry_index), None)
+                if extra_entry:
+                    extra_armature = import_full_entry(self, context, extra_entry, start_time)
+                    if extra_armature:
+                        binding = extra_armature.constraints.new(type='COPY_TRANSFORMS')
+                        binding.target = master_armature
+                        binding.subtarget = f'bone_{item.bone_index}'
         
         bpy.context.view_layer.update()
-
         return {"FINISHED"}
-
 
 def menu_func_import(self, context):
     self.layout.operator(LoadlistImporter.bl_idname, text="Guilty Gear 2 Overture Loadlist (.bin)")
 
-classes = (GG2EntryItem, GG2_UL_EntryList, LoadlistEntrySelector, LoadlistImporter, GG2ImporterPreferences)
+classes = (
+    GG2EntryItem, 
+    GG2ExtraItem, 
+    GG2_UL_EntryList, 
+    LoadlistEntrySelector, 
+    LoadlistExtrasSelector, 
+    LoadlistImporter, 
+    GG2ImporterPreferences
+)
 
 def register():
     for cls in classes:
@@ -362,8 +455,12 @@ def register():
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
     bpy.types.WindowManager.gg2_import_entries = CollectionProperty(type=GG2EntryItem)
     bpy.types.WindowManager.gg2_active_entry_index = IntProperty(name="Active Entry Index", default=0)
+    bpy.types.WindowManager.gg2_import_extras = CollectionProperty(type=GG2ExtraItem)
 
 def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
+    del bpy.types.WindowManager.gg2_import_entries
+    del bpy.types.WindowManager.gg2_active_entry_index
+    del bpy.types.WindowManager.gg2_import_extras

@@ -140,11 +140,11 @@ def create_and_assign_material(meshes, material_name, texture_bytes=None, textur
 
             links.new(bsdf_node.outputs["BSDF"], output_node.inputs["Surface"])
 
-            print(f"Creating material '{material_name}' for mesh {i} with texture index {meshes[i]['texture_idx']}")
+            #print(f"Creating material '{material_name}' for mesh {i} with texture index {meshes[i]['texture_idx']}")
             try:
                 if texture_bytes[meshes[i]["texture_idx"]][0]:
                     tex_filepath = os.path.join(temp_dir, f"{texture_names[meshes[i]['texture_idx']][0]}_diffuse.dds")
-                    print(f"Using texture index {meshes[i]['texture_idx']} for mesh {i}, saving to {tex_filepath}")
+                    #print(f"Using texture index {meshes[i]['texture_idx']} for mesh {i}, saving to {tex_filepath}")
                     img = save_and_load_dds(texture_bytes[meshes[i]["texture_idx"]][0], tex_filepath)
                     if img:
                         tex_node = nodes.new(type="ShaderNodeTexImage")
@@ -157,7 +157,7 @@ def create_and_assign_material(meshes, material_name, texture_bytes=None, textur
         
             try:
                 if texture_bytes[meshes[i]["texture_idx"]][1]:
-                    print(f"Mesh {i} has normal texture at index {meshes[i]['texture_idx']}, saving to {temp_dir}")
+                    #print(f"Mesh {i} has normal texture at index {meshes[i]['texture_idx']}, saving to {temp_dir}")
                     norm_filepath = os.path.join(temp_dir, f"{texture_names[meshes[i]['texture_idx']][1]}_normal.dds")
                     norm_img = save_and_load_dds(texture_bytes[meshes[i]["texture_idx"]][1], norm_filepath)
                     if norm_img:
@@ -215,11 +215,6 @@ def _strip_to_triangles(indices):
         else:
             faces.append((indices[i + 1], indices[i], indices[i + 2]))
     return faces
-
-@dataclass
-class GG2Mesh:
-    name: str
-    diffuse_texture: str
 
 def _parse_weights(eight_bytes):
     z = list(eight_bytes) + [0]
@@ -373,7 +368,7 @@ def create_blender_mesh_from_afb(name, data=None, target_collection=None):
             
             texture_name = data[offset : offset + str_length].decode("utf-8", errors="ignore")
             textures.append(texture_name)
-            print(f"Found texture: {texture_name}")
+            #print(f"Found texture: {texture_name}")
             
             offset += str_length
             offset += 4
@@ -408,8 +403,7 @@ def create_blender_mesh_from_afb(name, data=None, target_collection=None):
         if i_offset_base == -1:
             print(f"Warning: No PIDX found for {mesh_name}")
             continue
-            
-        # Old code logic: offset + 8 is the size block for PIDX
+        
         ibuf_size_bytes = struct.unpack("<I", data[i_offset_base + 8 : i_offset_base + 12])[0]
         ibuf_count = ibuf_size_bytes // 2
         ibuf_start = i_offset_base + 12
@@ -429,198 +423,3 @@ def create_blender_mesh_from_afb(name, data=None, target_collection=None):
         created_meshes.append(mesh)
 
     return {"armature": arm_obj, "meshes": created_meshes, "textures": textures}
-    
-
-
-
-
-
-
-def old_create_blender_mesh_from_afb(name, data=None, target_collection=None):
-    if not data:
-        return None
-
-    if target_collection is None:
-        target_collection = bpy.context.collection
-
-    bs = data
-    if bs.find(b"VRTB") == -1:
-        print(f"Error: this is not a valid GG2 .afb file.")
-        return None
-
-    base_name = name
-    v_offsets = [(i + 4) for i in _findall(b"VRTB", bs)]
-    i_offsets = [(i + 8) for i in _findall(b"PIDX", bs)]
-    b_offset = bs.find(b"BONE")
-
-    arm_obj = None
-    bones_data = []
-    created_meshes = []
-
-    # BONE BLOCK
-    if b_offset != -1:
-        num_bones = struct.unpack("<I", bs[b_offset + 4 : b_offset + 8])[0] // 40
-        current_offset = b_offset + 8
-
-        for i in range(num_bones):
-            qx, qy, qz, qw = struct.unpack_from("<4f", bs, current_offset)
-            px, py, pz = struct.unpack_from("<3f", bs, current_offset + 16)
-            parent_idx = struct.unpack_from("<B", bs, current_offset + 32)[0]
-
-            quat = mathutils.Quaternion((qw, qx, qy, qz))
-            loc = mathutils.Vector((px, py, pz))
-            local_matrix = mathutils.Matrix.Translation(loc) @ quat.to_matrix().to_4x4()
-
-            bones_data.append({"name": f"bone_{i}", "parent": parent_idx, "local_matrix": local_matrix})
-            current_offset += 40
-
-        arm_data = bpy.data.armatures.new(f"{base_name}_ArmatureData")
-        arm_obj = bpy.data.objects.new(f"{base_name}_Rig", arm_data)
-        target_collection.objects.link(arm_obj)
-
-        bpy.context.view_layer.objects.active = arm_obj
-        bpy.ops.object.mode_set(mode="EDIT")
-        edit_bones = arm_obj.data.edit_bones
-        blender_bones = []
-
-        for bd in bones_data:
-            b = edit_bones.new(bd["name"])
-            b.head = (0, 0, 0)
-            b.tail = (0, 1, 0)
-            blender_bones.append(b)
-
-        absolute_matrices = {}
-        def get_abs_mat(idx):
-            if idx in absolute_matrices:
-                return absolute_matrices[idx]
-            p_idx = bones_data[idx]["parent"]
-            loc_mat = bones_data[idx]["local_matrix"]
-            if 0 <= p_idx < num_bones and p_idx != idx:
-                blender_bones[idx].parent = blender_bones[p_idx]
-                abs_mat = get_abs_mat(p_idx) @ loc_mat
-            else:
-                abs_mat = loc_mat
-            absolute_matrices[idx] = abs_mat
-            return abs_mat
-
-        for i in range(num_bones):
-            blender_bones[i].matrix = get_abs_mat(i)
-
-        bpy.ops.object.mode_set(mode="OBJECT")
-
-
-    # MESH BLOCK
-    for mesh_idx in range(len(v_offsets)):
-        mesh_name = f"{base_name}_mesh_{mesh_idx}"
-        v_offset = v_offsets[mesh_idx]
-        vbuf_size = struct.unpack("<I", bs[v_offset : v_offset + 4])[0]
-        vbuf = bs[v_offset + 4 : v_offset + 4 + vbuf_size]
-
-        i_offset = i_offsets[mesh_idx]
-        ibuf_count = struct.unpack("<I", bs[i_offset : i_offset + 4])[0] // 2
-        ibuf = struct.unpack(f"<{ibuf_count}H", bs[i_offset + 4 : i_offset + 4 + (ibuf_count * 2)])
-
-        stride = len(vbuf) // (max(ibuf) + 1)
-        vertices = []
-        num_verts = len(vbuf) // stride
-        for i in range(num_verts):
-            vx, vy, vz = struct.unpack_from("<3f", vbuf, i * stride)
-            vertices.append((vx, vy, vz))
-
-        faces = _strip_to_triangles(ibuf)
-
-        mesh = bpy.data.meshes.new(mesh_name)
-        obj = bpy.data.objects.new(mesh_name, mesh)
-        target_collection.objects.link(obj)
-        created_meshes.append(obj)
-
-        mesh.from_pydata(vertices, [], faces)
-        mesh.update()
-
-        if arm_obj and len(bones_data) > 0:
-            for b in bones_data:
-                obj.vertex_groups.new(name=b["name"])
-
-        uv_layer = mesh.uv_layers.new(name="UVMap")
-        for loop in mesh.loops:
-            v_idx = loop.vertex_index
-            uv_offset = v_idx * stride + stride - 16
-            u, v = struct.unpack_from("<2f", vbuf, uv_offset)
-            uv_layer.data[loop.index].uv = (u, 1.0 - v)
-
-        if arm_obj and len(bones_data) > 0:
-            for v_idx in range(num_verts):
-                weight_offset = v_idx * stride + stride - 8
-                weight_data = vbuf[weight_offset : weight_offset + 8]
-                indices, weights = _parse_weights(weight_data)
-
-                for i in range(4):
-                    if weights[i] > 0 and indices[i] < len(bones_data):
-                        bone_name = f"bone_{indices[i]}"
-                        vg = obj.vertex_groups.get(bone_name)
-                        if vg:
-                            vg.add([v_idx], weights[i] / 255.0, "REPLACE")
-
-        if arm_obj:
-            obj.parent = arm_obj
-            mod = obj.modifiers.new(type="ARMATURE", name="Armature")
-            mod.object = arm_obj
-
-    return {"armature": arm_obj, "meshes": created_meshes}
-
-def old_apply_motion_to_armature(armature, motion_data, action_name):
-    """Too slow"""
-    pose_bones = armature.pose.bones
-
-    if not armature.animation_data:
-        armature.animation_data_create()
-
-    if motion_data.track_count != len(pose_bones):
-        action = bpy.data.actions.new(name=f"{action_name}-broken")
-        return
-    
-    action = bpy.data.actions.new(name=action_name)
-    armature.animation_data.action = action
-    
-
-    for track_index, track in enumerate(motion_data.tracks):
-        target_bone_name = f"bone_{track_index}"
-        pose_bone = pose_bones.get(target_bone_name)
-
-        if pose_bone is None:
-            continue
-
-        if pose_bone.parent:
-            par = pose_bone.parent
-            relative_matrix = par.bone.matrix_local.inverted() @ pose_bone.bone.matrix_local
-        else:
-            relative_matrix = pose_bone.bone.matrix_local
-
-        for keyframe in track.keyframes:
-            if keyframe is None:
-                continue
-            frame = keyframe.time
-
-            # Apply Rotation
-            if keyframe.rotation:
-                blender_pose_quat = relative_matrix.inverted().decompose()[1] @ keyframe.rotation.to_blender()
-                if blender_pose_quat.w < 0:
-                    blender_pose_quat.negate()
-                pose_bone.rotation_mode = "QUATERNION"
-                pose_bone.rotation_quaternion = blender_pose_quat
-                pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame)
-
-            # Apply Translation
-            if keyframe.translation:
-                blender_pose_vec = relative_matrix.inverted() @ keyframe.translation.to_blender()
-                pose_bone.location = blender_pose_vec
-                pose_bone.keyframe_insert(data_path="location", frame=frame)
-
-            # Apply Scale
-            if keyframe.scale:
-                blender_pose_scale = keyframe.scale.to_blender()
-                pose_bone.scale = blender_pose_scale
-                pose_bone.keyframe_insert(data_path="scale", frame=frame)
-
-    action.use_fake_user = True
-    return action
