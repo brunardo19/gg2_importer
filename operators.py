@@ -55,6 +55,9 @@ def code_to_name(code):
         
         if code[1:3] == "CP":
             return f"{master} Capture {code[3:]}".strip()
+        
+        if code[1:3] == "GM":
+            return f"{master} Master Ghost {code[3:]}".strip()
             
         if code[1] in {"H", "J", "I"}:
             rank = config.DISPLAY_NAMES_2[code[1]]

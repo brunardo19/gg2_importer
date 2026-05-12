@@ -7,6 +7,17 @@ import os
 import tempfile
 import uuid
 
+def _make_fcurve_owner(action, armature):
+    # Blender 4.4+ moved fcurves off action onto a channelbag.
+    # Fall back to action.fcurves for older versions.
+    try:
+        from bpy_extras import anim_utils
+        slot = action.slots.new(id_type='OBJECT', name=armature.name)
+        armature.animation_data.action_slot = slot
+        return anim_utils.action_ensure_channelbag_for_slot(action, slot)
+    except AttributeError:
+        return action
+
 def apply_motion_to_armature(armature, motion_data, action_name):
     pose_bones = armature.pose.bones
 
@@ -16,9 +27,10 @@ def apply_motion_to_armature(armature, motion_data, action_name):
     if motion_data.track_count != len(pose_bones):
         action = bpy.data.actions.new(name=f"{action_name}-broken")
         return action
-    
+
     action = bpy.data.actions.new(name=action_name)
     armature.animation_data.action = action
+    fcurve_owner = _make_fcurve_owner(action, armature)
 
     for track_index, track in enumerate(motion_data.tracks):
         target_bone_name = f"bone_{track_index}"
@@ -30,16 +42,15 @@ def apply_motion_to_armature(armature, motion_data, action_name):
         # Set rotation mode once per bone, not every frame
         pose_bone.rotation_mode = "QUATERNION"
 
-        # Pre-calculate inverted relative matrix once per track
         if pose_bone.parent:
             par = pose_bone.parent
             relative_matrix_inv = (par.bone.matrix_local.inverted() @ pose_bone.bone.matrix_local).inverted()
         else:
             relative_matrix_inv = pose_bone.bone.matrix_local.inverted()
-            
+
         rel_inv_quat = relative_matrix_inv.decompose()[1]
 
-        # Prepare flat coordinate lists
+        # Prepare lists
         rot_data = {0: [], 1: [], 2: [], 3: []}
         loc_data = {0: [], 1: [], 2: []}
         scl_data = {0: [], 1: [], 2: []}
@@ -49,25 +60,22 @@ def apply_motion_to_armature(armature, motion_data, action_name):
                 continue
             frame = keyframe.time
 
-            # Collect Rotation
             if keyframe.rotation:
                 blender_pose_quat = rel_inv_quat @ keyframe.rotation
                 if blender_pose_quat.w < 0:
                     blender_pose_quat.negate()
-                
+
                 rot_data[0].extend((frame, blender_pose_quat.w))
                 rot_data[1].extend((frame, blender_pose_quat.x))
                 rot_data[2].extend((frame, blender_pose_quat.y))
                 rot_data[3].extend((frame, blender_pose_quat.z))
 
-            # Collect Translation
             if keyframe.translation:
                 blender_pose_vec = relative_matrix_inv @ keyframe.translation
                 loc_data[0].extend((frame, blender_pose_vec.x))
                 loc_data[1].extend((frame, blender_pose_vec.y))
                 loc_data[2].extend((frame, blender_pose_vec.z))
 
-            # Collect Scale
             if keyframe.scale:
                 blender_pose_scale = keyframe.scale
                 scl_data[0].extend((frame, blender_pose_scale.x))
@@ -78,8 +86,8 @@ def apply_motion_to_armature(armature, motion_data, action_name):
         def batch_add_fcurves(data_dict, data_path, length):
             if not any(data_dict.values()):
                 return
-            
-            fcurves = [action.fcurves.new(data_path=data_path, index=i) for i in range(length)]
+
+            fcurves = [fcurve_owner.fcurves.new(data_path=data_path, index=i) for i in range(length)]
             for i in range(length):
                 coords = data_dict[i]
                 if coords:
@@ -88,7 +96,6 @@ def apply_motion_to_armature(armature, motion_data, action_name):
                     fcurves[i].keyframe_points.foreach_set('co', coords)
                     fcurves[i].update()
 
-        # Build F-Curves
         base_path = f'pose.bones["{target_bone_name}"]'
         batch_add_fcurves(rot_data, f'{base_path}.rotation_quaternion', 4)
         batch_add_fcurves(loc_data, f'{base_path}.location', 3)
@@ -228,12 +235,11 @@ def _parse_weights(eight_bytes):
     weights = [z[x + 1] for x in range(1, 8, 2)]
     return indices, weights
 
-def build_blender_mesh(mesh_name, vbuf, ibuf, bones_data, target_collection, arm_obj=None):
+def build_blender_mesh(mesh_name, vbuf, ibuf, stride, bones_data, target_collection, arm_obj=None):
     """
     Parses vertex and index buffers to generate a Blender mesh with UVs and Vertex Groups.
-    Assumes a strict 64-byte stride for the vertex buffer.
+    Supports vertex strides 48, 64, and 80 as defined by the AFB format.
     """
-    stride = 64
     num_verts = len(vbuf) // stride
     vertices = []
 
@@ -251,22 +257,51 @@ def build_blender_mesh(mesh_name, vbuf, ibuf, bones_data, target_collection, arm
     mesh.from_pydata(vertices, [], faces)
     mesh.update()
 
-    uv_layer = mesh.uv_layers.new(name="UVMap")
-    for loop in mesh.loops:
-        v_idx = loop.vertex_index
-        u, v = struct.unpack_from("<2f", vbuf, (v_idx * stride) + 48)
-        uv_layer.data[loop.index].uv = (u, 1.0 - v)
+    print(f'Mesh "{mesh_name}" created with {len(vertices)} vertices, {len(mesh.edges)} edges, {len(mesh.polygons)} polygons, {len(mesh.loops)} loops, and {len(faces)} faces.')
 
-    if arm_obj and bones_data:
-        
+    uv_offset = 48 if stride > 48 else 32
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    for polygon in mesh.polygons:
+        for loop_idx in polygon.loop_indices:
+            v_idx = mesh.loops[loop_idx].vertex_index
+            u, v = struct.unpack_from("<2f", vbuf, (v_idx * stride) + uv_offset)
+            uv_layer.data[loop_idx].uv = (1.0 + u, 1.0 - v)
+
+    # Determine tail type: stride-80 always has bone weights; stride-48/-64 probe
+    # first vertex byte at (stride-8) — value <=4 means bone weight block, >4 means vertex color.
+    tail_start = stride - 8
+    if stride == 80:
+        is_skinned = True
+    else:
+        is_skinned = len(vbuf) >= stride and vbuf[tail_start] <= 4
+
+    # Vertex color layer
+    if stride == 80:
+        # stride-80: vertex color always at fixed offset +64 (4 bytes RGBA)
+        color_attr = mesh.color_attributes.new(name="Col", type="BYTE_COLOR", domain="POINT")
+        for v_idx in range(num_verts):
+            base = v_idx * stride
+            r, g, b, a = vbuf[base + 64 : base + 68]
+            color_attr.data[v_idx].color = (r / 255.0, g / 255.0, b / 255.0, a / 255.0)
+    elif not is_skinned:
+        # stride-48/-64 static variant: tail bytes are vertex color
+        color_attr = mesh.color_attributes.new(name="Col", type="BYTE_COLOR", domain="POINT")
+        for v_idx in range(num_verts):
+            base = v_idx * stride
+            r, g, b, a = vbuf[base + tail_start : base + tail_start + 4]
+            color_attr.data[v_idx].color = (r / 255.0, g / 255.0, b / 255.0, a / 255.0)
+
+    if is_skinned and arm_obj and bones_data:
+
         for b in bones_data:
             obj.vertex_groups.new(name=b["name"])
 
+        # stride-80 weights are at +72; all others at tail_start (stride-8)
+        weight_tail = 72 if stride == 80 else tail_start
         for v_idx in range(num_verts):
-            
-            weight_offset = (v_idx * stride) + 56
+            weight_offset = (v_idx * stride) + weight_tail
             weight_data = vbuf[weight_offset : weight_offset + 8]
-            
+
             indices, weights = _parse_weights(weight_data)
 
             for i in range(4):
@@ -409,12 +444,16 @@ def create_blender_mesh_from_afb(name, data=None, target_collection=None):
         ibuf_start = i_offset_base + 12
         ibuf = struct.unpack(f"<{ibuf_count}H", data[ibuf_start : ibuf_start + ibuf_size_bytes])
 
+        vertex_count = max(ibuf) + 1
+        stride = len(vbuf) // vertex_count
+
         mesh_obj = build_blender_mesh(
-            mesh_name=mesh_name, 
-            vbuf=vbuf, 
-            ibuf=ibuf, 
-            bones_data=bones_data, 
-            target_collection=target_collection, 
+            mesh_name=mesh_name,
+            vbuf=vbuf,
+            ibuf=ibuf,
+            stride=stride,
+            bones_data=bones_data,
+            target_collection=target_collection,
             arm_obj=arm_obj
         )
         

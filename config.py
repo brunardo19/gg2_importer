@@ -7,7 +7,7 @@ MOTS = [
 ]
 
 DISPLAY_NAMES_1 = {
-    "E" : "Valentine", #Elphelt?
+    "E" : "Valentine", #Elf
     "S" : "Sol",
     "N" : "Sin",
     "D" : "Dr Paradigm",
@@ -21,7 +21,8 @@ DISPLAY_NAMES_2 = {
     "A" : "Elite", #Advanced?
     "S" : "Special", #?
     "J" : "Alternative", #?
-    "I" : "Special" #?
+    "I" : "Special", #?
+    "GM": "Master Ghost"
 }
 DISPLAY_NAMES_3 = {
     "M" : "Meele",
