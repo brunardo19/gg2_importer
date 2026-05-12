@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Guilty Gear 2 Overture Loadlist importer",
     "author": "Brunardo",
-    "version": (1, 0, 0),
+    "version": (1, 0, 1),
     "blender": (4, 5, 0),
     "location": "File > Import",
     "description": "Uses the loadlist.bin to import full characters with meshes, textures and animations",
