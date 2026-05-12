@@ -6,6 +6,16 @@ MOTS = [
     "EMMOT.PKM", "VMMOT.PKM", "KMMOT.PKM", "BMOT.PKM", # BMOT at the end instead of CMOT for a very valid reason
 ]
 
+SPECIAL_NAMES = {
+    "BA" : "That Man",
+    "BAWR" : "That Man Drone",
+    "BAWL" : "That Man Drone",
+    "BB" : "MechaValentine",
+    "BC" : "(Construction) Large MechaValentine",
+    "BD" : "Large MechaValentine",
+    "TH" : "Maiden of the Grove"
+}
+
 DISPLAY_NAMES_1 = {
     "E" : "Valentine", #Elf
     "S" : "Sol",
@@ -21,8 +31,7 @@ DISPLAY_NAMES_2 = {
     "A" : "Elite", #Advanced?
     "S" : "Special", #?
     "J" : "Alternative", #?
-    "I" : "Special", #?
-    "GM": "Master Ghost"
+    "I" : "Special" #?
 }
 DISPLAY_NAMES_3 = {
     "M" : "Meele",
