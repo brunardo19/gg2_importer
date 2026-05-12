@@ -85,16 +85,13 @@ class GG2_UL_EntryList(bpy.types.UIList):
         flt_flags = []
         flt_neworder = []
 
-        # Enables filtering by the 'display_name' property
         if self.filter_name:
-            flt_flags = bpy.types.UI_UL_list.filter_items_by_name(
-                self.filter_name, 
-                self.bitflag_filter_item, 
-                entries, 
-                "display_name", 
-                reverse=False
-            )
-        
+            q = self.filter_name.lower()
+            flt_flags = [0] * len(entries)
+            for i, e in enumerate(entries):
+                if q in e.display_name.lower() or q in e.internal_name.lower():
+                    flt_flags[i] = self.bitflag_filter_item
+
         return flt_flags, flt_neworder
 
 # Rows for extras
